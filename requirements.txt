@@ -1,0 +1,16 @@
+fastapi==0.110.0
+uvicorn==0.29.0
+python-multipart==0.0.9
+python-dotenv==1.0.1
+sqlalchemy==2.0.29
+mysql-connector-python==8.4.0
+psycopg2-binary==2.9.9
+langchain==0.1.16
+langchain-openai==0.1.6
+langchain-text-splitters==0.0.1
+langchain-community==0.0.33
+pydantic==2.6.4
+pydantic-settings==2.2.1
+numpy==1.26.4
+pypdf==4.2.0
+python-docx==1.1.2

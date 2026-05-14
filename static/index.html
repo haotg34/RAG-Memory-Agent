@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGI Assistant - 帝王Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1',
+                        secondary: '#8b5cf6',
+                        dark: '#1e1b4b',
+                        light: '#f5f3ff'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 h-screen flex flex-col">
+    <header class="bg-primary text-white shadow-md py-3 px-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center">
+                <i class="fa fa-robot mr-2"></i>
+                AGI Assistant
+            </h1>
+            <div class="flex items-center space-x-3">
+                <div class="hidden md:flex items-center space-x-2 bg-white/15 rounded-md px-2 py-1">
+                    <span class="text-xs opacity-90">模型</span>
+                    <select id="provider-select" class="text-xs bg-white/20 text-white rounded px-2 py-1 outline-none">
+                        <option value="">默认</option>
+                        <option value="dashscope">百炼</option>
+                        <option value="volc_ark">方舟</option>
+                        <option value="volc_ark_coding">方舟Coding</option>
+                        <option value="openai">OpenAI</option>
+                    </select>
+                    <select id="model-select" class="text-xs bg-white/20 text-white rounded px-2 py-1 outline-none">
+                        <option value="">默认</option>
+                    </select>
+                    <input id="model-input" class="hidden text-xs bg-white/20 text-white rounded px-2 py-1 outline-none w-40" placeholder="自定义模型名">
+                    <button id="model-custom-btn" class="text-xs bg-white/20 hover:bg-white/30 text-white rounded px-2 py-1">自定义</button>
+                </div>
+                <label class="cursor-pointer bg-white/20 hover:bg-white/30 px-3 py-1 rounded-md transition">
+                    <i class="fa fa-upload mr-1"></i> 上传文档
+                    <input type="file" id="file-upload" accept=".pdf,.txt,.md,.docx" class="hidden">
+                </label>
+                <span id="user-id" class="text-sm opacity-80">用户: demo_user</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col">
+            <div class="p-4 border-b border-gray-200">
+                <button id="new-chat-btn" class="w-full bg-primary text-white py-2 rounded-lg hover:bg-primary/90 transition flex items-center justify-center">
+                    <i class="fa fa-plus mr-2"></i> 新建会话
+                </button>
+            </div>
+            <div id="session-list" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+        </aside>
+
+        <main class="flex-1 flex flex-col">
+            <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <div class="flex justify-start">
+                    <div class="bg-white rounded-lg rounded-tl-none shadow-sm p-4 max-w-2xl">
+                        <p class="text-gray-800">你好！我是AGI Assistant，一个具备长期记忆和知识库能力的智能助手。</p>
+                        <p class="text-gray-600 mt-2">我可以：</p>
+                        <ul class="text-gray-600 list-disc list-inside mt-1">
+                            <li>记住你说过的话和偏好</li>
+                            <li>基于上传的文档回答问题</li>
+                            <li>进行复杂的推理和分析</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-200 p-4 bg-white">
+                <div class="flex space-x-2">
+                    <textarea
+                        id="message-input"
+                        class="flex-1 border border-gray-300 rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        rows="2"
+                        placeholder="输入你的问题..."
+                    ></textarea>
+                    <button
+                        id="send-btn"
+                        class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition flex items-center"
+                    >
+                        <i class="fa fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const USER_ID = "demo_user";
+        let currentSessionId = null;
+        let sessions = JSON.parse(localStorage.getItem('sessions') || '[]');
+
+        const chatContainer = document.getElementById('chat-container');
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const newChatBtn = document.getElementById('new-chat-btn');
+        const sessionList = document.getElementById('session-list');
+        const fileUpload = document.getElementById('file-upload');
+        const providerSelect = document.getElementById('provider-select');
+        const modelSelect = document.getElementById('model-select');
+        const modelInput = document.getElementById('model-input');
+        const modelCustomBtn = document.getElementById('model-custom-btn');
+
+        const MODEL_PRESETS = {
+            dashscope: [
+                { id: 'qwen-plus', label: 'qwen-plus' },
+                { id: 'qwen-max', label: 'qwen-max' },
+                { id: 'qwen-max-longcontext', label: 'qwen-max-longcontext（如支持）' }
+            ],
+            volc_ark: [
+                { id: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215' }
+            ],
+            volc_ark_coding: [
+                { id: 'doubao-seed-code', label: 'doubao-seed-code（需 CodingPlan）' }
+            ],
+            openai: [
+                { id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+                { id: 'gpt-4o', label: 'gpt-4o' },
+                { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+                { id: 'gpt-4.1', label: 'gpt-4.1' }
+            ]
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initModelPicker();
+            renderSessionList();
+            if (sessions.length > 0) {
+                selectSession(sessions[0].id);
+            }
+        });
+
+        function initModelPicker() {
+            const savedProvider = localStorage.getItem('llm_provider') || '';
+            const savedModel = localStorage.getItem('llm_model') || '';
+            const savedCustom = localStorage.getItem('llm_model_custom') || '0';
+
+            providerSelect.value = savedProvider;
+            rebuildModelOptions(savedProvider, savedModel);
+
+            if (savedCustom === '1') {
+                setCustomMode(true);
+                modelInput.value = savedModel;
+            } else {
+                setCustomMode(false);
+                if (savedModel) modelSelect.value = savedModel;
+            }
+
+            providerSelect.addEventListener('change', () => {
+                localStorage.setItem('llm_provider', providerSelect.value);
+                localStorage.setItem('llm_model_custom', '0');
+                setCustomMode(false);
+                rebuildModelOptions(providerSelect.value, '');
+                localStorage.setItem('llm_model', '');
+            });
+
+            modelSelect.addEventListener('change', () => {
+                localStorage.setItem('llm_model', modelSelect.value);
+            });
+
+            modelInput.addEventListener('input', () => {
+                localStorage.setItem('llm_model', modelInput.value.trim());
+            });
+
+            modelCustomBtn.addEventListener('click', () => {
+                const next = modelInput.classList.contains('hidden');
+                setCustomMode(next);
+                localStorage.setItem('llm_model_custom', next ? '1' : '0');
+                const v = next ? modelInput.value.trim() : (modelSelect.value || '');
+                localStorage.setItem('llm_model', v);
+            });
+        }
+
+        function rebuildModelOptions(provider, selected) {
+            const options = MODEL_PRESETS[provider] || [];
+            modelSelect.innerHTML = '<option value="">默认</option>';
+            options.forEach(o => {
+                const opt = document.createElement('option');
+                opt.value = o.id;
+                opt.textContent = o.label;
+                modelSelect.appendChild(opt);
+            });
+            if (selected) modelSelect.value = selected;
+
+            if (!provider) return;
+            fetch(`/api/models?provider=${encodeURIComponent(provider)}`)
+                .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+                .then(data => {
+                    if (!data || !Array.isArray(data.models) || data.models.length === 0) return;
+                    const keep = new Set(['']);
+                    Array.from(modelSelect.options).forEach(o => keep.add(o.value));
+                    data.models.forEach(id => {
+                        if (keep.has(id)) return;
+                        const opt = document.createElement('option');
+                        opt.value = id;
+                        opt.textContent = id;
+                        modelSelect.appendChild(opt);
+                    });
+                    if (selected) modelSelect.value = selected;
+                })
+                .catch(() => {});
+        }
+
+        function setCustomMode(on) {
+            if (on) {
+                modelSelect.classList.add('hidden');
+                modelInput.classList.remove('hidden');
+                modelCustomBtn.textContent = '使用预设';
+            } else {
+                modelInput.classList.add('hidden');
+                modelSelect.classList.remove('hidden');
+                modelCustomBtn.textContent = '自定义';
+            }
+        }
+
+        function renderSessionList() {
+            sessionList.innerHTML = '';
+            sessions.forEach(session => {
+                const div = document.createElement('div');
+                div.className = `p-2 rounded-lg cursor-pointer hover:bg-gray-100 ${session.id === currentSessionId ? 'bg-gray-100' : ''}`;
+                div.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="truncate">${session.title}</span>
+                        <button class="delete-session text-gray-400 hover:text-red-500" data-id="${session.id}">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                `;
+                div.addEventListener('click', (e) => {
+                    if (!e.target.closest('.delete-session')) {
+                        selectSession(session.id);
+                    }
+                });
+                div.querySelector('.delete-session').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteSession(session.id);
+                });
+                sessionList.appendChild(div);
+            });
+        }
+
+        function selectSession(sessionId) {
+            currentSessionId = sessionId;
+            renderSessionList();
+            loadSessionMessages(sessionId);
+        }
+
+        function createNewSession() {
+            const sessionId = Date.now().toString();
+            const newSession = { id: sessionId, title: '新会话', messages: [] };
+            sessions.unshift(newSession);
+            saveSessions();
+            selectSession(sessionId);
+        }
+
+        function deleteSession(sessionId) {
+            sessions = sessions.filter(s => s.id !== sessionId);
+            saveSessions();
+            if (currentSessionId === sessionId) {
+                if (sessions.length > 0) {
+                    selectSession(sessions[0].id);
+                } else {
+                    currentSessionId = null;
+                    chatContainer.innerHTML = `
+                        <div class="flex justify-start">
+                            <div class="bg-white rounded-lg rounded-tl-none shadow-sm p-4 max-w-2xl">
+                                <p class="text-gray-800">你好！我是AGI Assistant，一个具备长期记忆和知识库能力的智能助手。</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            renderSessionList();
+        }
+
+        function saveSessions() {
+            localStorage.setItem('sessions', JSON.stringify(sessions));
+        }
+
+        function loadSessionMessages(sessionId) {
+            const session = sessions.find(s => s.id === sessionId);
+            if (!session) return;
+
+            chatContainer.innerHTML = '';
+            session.messages.forEach(msg => addMessageToUI(msg.role, msg.content, msg.token_usage || null, false));
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addMessageToUI(role, content, tokenUsage = null, animate = true) {
+            const div = document.createElement('div');
+            div.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex flex-col';
+
+            const bubble = document.createElement('div');
+            bubble.className = `rounded-lg shadow-sm p-4 max-w-2xl ${
+                role === 'user'
+                    ? 'bg-primary text-white rounded-tr-none'
+                    : 'bg-white rounded-tl-none'
+            }`;
+
+            wrapper.appendChild(bubble);
+
+            if (role === 'assistant' && tokenUsage && typeof tokenUsage === 'object') {
+                const meta = document.createElement('div');
+                meta.className = 'mt-1 text-[11px] text-gray-500';
+                const p = tokenUsage.prompt_tokens ?? 0;
+                const c = tokenUsage.completion_tokens ?? 0;
+                const t = tokenUsage.total_tokens ?? (p + c);
+                meta.textContent = `Tokens：prompt ${p} / completion ${c} / total ${t}`;
+                wrapper.appendChild(meta);
+            }
+
+            if (animate && role === 'assistant') {
+                bubble.innerHTML = '';
+                div.appendChild(wrapper);
+                chatContainer.appendChild(div);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
+                let i = 0;
+                const interval = setInterval(() => {
+                    if (i < content.length) {
+                        bubble.innerHTML += content.charAt(i);
+                        i++;
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    } else {
+                        clearInterval(interval);
+                    }
+                }, 20);
+            } else {
+                bubble.textContent = content;
+                div.appendChild(wrapper);
+                chatContainer.appendChild(div);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            if (!currentSessionId) createNewSession();
+
+            messageInput.value = '';
+            addMessageToUI('user', message, null);
+
+            const session = sessions.find(s => s.id === currentSessionId);
+            session.messages.push({ role: 'user', content: message, token_usage: null });
+
+            if (session.messages.length === 1) {
+                session.title = message.substring(0, 20) + (message.length > 20 ? '...' : '');
+                renderSessionList();
+            }
+
+            saveSessions();
+
+            try {
+                const llmProvider = localStorage.getItem('llm_provider') || '';
+                const llmModel = localStorage.getItem('llm_model') || '';
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        message: message,
+                        session_id: currentSessionId,
+                        llm_provider: llmProvider || null,
+                        llm_model: llmModel || null
+                    })
+                });
+
+                if (!response.ok) {
+                    let detail = '请求失败';
+                    try {
+                        const err = await response.json();
+                        if (err && err.detail) detail = err.detail;
+                    } catch (_) {}
+                    throw new Error(detail);
+                }
+
+                const data = await response.json();
+                addMessageToUI('assistant', data.response, data.token_usage || null);
+                session.messages.push({ role: 'assistant', content: data.response, token_usage: data.token_usage || null });
+                saveSessions();
+            } catch (error) {
+                addMessageToUI('assistant', `抱歉，发生了错误：${error.message || '请稍后再试。'}`, null);
+            }
+        }
+
+        async function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload', { method: 'POST', body: formData });
+                if (!response.ok) throw new Error('上传失败');
+
+                const data = await response.json();
+                addMessageToUI('assistant', data.message);
+            } catch (error) {
+                addMessageToUI('assistant', '文档上传失败，请稍后再试。');
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        newChatBtn.addEventListener('click', createNewSession);
+        fileUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                uploadFile(file);
+                e.target.value = '';
+            }
+        });
+    </script>
+</body>
+</html>

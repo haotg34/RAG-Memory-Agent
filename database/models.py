@@ -57,3 +57,24 @@ class LLMUsageLog(Base):
     completion_tokens = Column(Integer, default=0, nullable=False)
     total_tokens = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class LLMRouteLog(Base):
+    __tablename__ = "llm_route_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), index=True, nullable=False)
+    session_id = Column(String(50), index=True, nullable=False)
+    query = Column(Text, nullable=False)
+
+    decided_tier = Column(String(20), index=True, nullable=False)
+    decided_score = Column(String(32), nullable=True)
+    rule_hit = Column(String(64), nullable=True)
+    checker_raw = Column(String(64), nullable=True)
+    upgraded = Column(Integer, default=0, nullable=False)
+    degraded = Column(Integer, default=0, nullable=False)
+
+    final_provider = Column(String(50), index=True, nullable=False)
+    final_model = Column(String(255), index=True, nullable=False)
+    meta = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

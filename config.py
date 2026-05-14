@@ -9,6 +9,18 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str = "gpt-3.5-turbo-0125"
+    llm_small_model: str | None = None
+    llm_medium_model: str | None = None
+    llm_large_model: str | None = None
+
+    routing_enabled: bool = True
+    routing_simple_len: int = 12
+    routing_score_threshold_small: float = 0.35
+    routing_score_threshold_medium: float = 0.7
+
+    llm_timeout_small_s: float = 8.0
+    llm_timeout_medium_s: float = 20.0
+    llm_timeout_large_s: float = 40.0
 
     dashscope_api_key: str | None = None
     volc_ark_api_key: str | None = None

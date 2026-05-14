@@ -1,4 +1,4 @@
-# AGI Assistant
+# RAG-Memory-Agent
 
 FastAPI + RAG + 记忆（PostgreSQL）。
 

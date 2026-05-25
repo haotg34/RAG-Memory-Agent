@@ -1,0 +1,24 @@
+{
+  "sample_count": 50,
+  "type_distribution": {
+    "chat": 2,
+    "normal": 24,
+    "sensitive": 4,
+    "complex": 7,
+    "fuzzy": 6,
+    "multi_context": 4,
+    "unknown": 2,
+    "context_ref": 1
+  },
+  "success_rate": 100.0,
+  "state_complete_rate": 100.0,
+  "route_parse_ok_rate": 100.0,
+  "checker_parse_ok_rate": 100.0,
+  "error_stage_coverage_rate": 0.0,
+  "avg_latency_ms": 30264.29,
+  "route_mix": {
+    "small": 5,
+    "large": 22,
+    "medium": 23
+  }
+}

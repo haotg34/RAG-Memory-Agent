@@ -6,6 +6,7 @@ from modules.memory.extractor import extract_user_preferences
 from config import settings
 import uuid
 from database.models import LLMUsageLog, LLMRouteLog
+from services.agent_state import AgentState, AgentStage
 from services.router_service import smart_route, check_answer_yesno
 
 
@@ -98,11 +99,21 @@ def _run_once(
     llm_provider: str | None,
     llm_model: str | None,
     db: Session | None,
+    agent_state: AgentState | None = None,
 ) -> dict:
     memory_manager = MemoryManager(user_id, db)
     llm = get_llm(llm_provider=llm_provider, llm_model=llm_model)
 
+    if agent_state:
+        agent_state.transition(AgentStage.RETRIEVE, "rewrite_query_start")
     rewritten_query = rewrite_query(message, llm)
+    if agent_state:
+        agent_state.transition(
+            AgentStage.RETRIEVE,
+            "rewrite_query_done",
+            {"rewritten_query": rewritten_query},
+        )
+
     long_term_memories = memory_manager.retrieve_long_term_memory(rewritten_query)
     recent_memory = memory_manager.get_recent_memory(session_id)
     recent_user_queries = [
@@ -110,11 +121,28 @@ def _run_once(
         for item in recent_memory[-6:]
         if item.get("role") == "user" and item.get("content")
     ][-2:]
+    if agent_state:
+        agent_state.transition(
+            AgentStage.RETRIEVE,
+            "memory_context_ready",
+            {
+                "long_term_memory_count": len(long_term_memories),
+                "recent_memory_count": len(recent_memory),
+                "recent_user_query_count": len(recent_user_queries),
+            },
+        )
+
     rag_results = hybrid_retrieval(
         rewritten_query,
         db,
         extra_queries=[message, *recent_user_queries],
     )
+    if agent_state:
+        agent_state.transition(
+            AgentStage.RETRIEVE,
+            "rag_retrieval_done",
+            {"rag_result_count": len(rag_results)},
+        )
     user_preferences = memory_manager.get_user_preferences()
 
     system_prompt = build_system_prompt(long_term_memories, rag_results, user_preferences)
@@ -122,11 +150,28 @@ def _run_once(
     messages.extend(recent_memory)
     messages.append({"role": "user", "content": message})
 
+    if agent_state:
+        agent_state.transition(
+            AgentStage.GENERATE,
+            "llm_generate_start",
+            {"provider": llm_provider, "model": llm_model},
+        )
     response = llm.invoke(messages)
     token_usage = _extract_token_usage(response)
 
     provider_used = (llm_provider or settings.llm_provider or "openai").lower()
     model_used = llm_model or settings.llm_model
+    if agent_state:
+        agent_state.transition(
+            AgentStage.GENERATE,
+            "llm_generate_done",
+            {
+                "provider": provider_used,
+                "model": model_used,
+                "token_usage": token_usage,
+                "answer_chars": len(response.content or ""),
+            },
+        )
     return {
         "memory_manager": memory_manager,
         "recent_memory": recent_memory,
@@ -151,7 +196,11 @@ def _persist_final(
     model_used: str,
     token_usage: dict,
     db: Session | None,
+    agent_state: AgentState | None = None,
 ):
+    if agent_state:
+        agent_state.transition(AgentStage.PERSIST, "persist_start")
+
     memory_manager.add_message("user", message, session_id)
     memory_manager.add_message("assistant", reply, session_id)
 
@@ -174,6 +223,13 @@ def _persist_final(
         except Exception:
             pass
 
+    if agent_state:
+        agent_state.transition(
+            AgentStage.PERSIST,
+            "usage_log_done",
+            {"provider": provider_used, "model": model_used, "token_usage": token_usage},
+        )
+
     if len(recent_memory) % 10 == 0 and len(recent_memory) > 0:
         full_conversation = memory_manager.get_recent_memory(session_id, limit=10)
         memory_manager.save_long_term_memory(full_conversation)
@@ -181,6 +237,12 @@ def _persist_final(
         new_preferences = extract_user_preferences(full_conversation)
         if new_preferences:
             memory_manager.update_user_preferences(new_preferences)
+        if agent_state:
+            agent_state.transition(
+                AgentStage.PERSIST,
+                "long_term_memory_update_done",
+                {"preference_keys": list((new_preferences or {}).keys())},
+            )
 
 
 def chat(
@@ -194,9 +256,21 @@ def chat(
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    agent_state = AgentState(user_id=user_id, session_id=session_id, query=message)
+    agent_state.transition(
+        AgentStage.INIT,
+        "chat_request_received",
+        {"routing_enabled": settings.routing_enabled, "manual_model": bool(llm_model)},
+    )
+
     if not settings.routing_enabled or llm_model:
         provider_used = (llm_provider or settings.llm_provider or "openai").lower()
         model_used = llm_model or settings.llm_model
+        agent_state.transition(
+            AgentStage.ROUTE,
+            "route_bypassed",
+            {"provider": provider_used, "model": model_used},
+        )
         try:
             run = _run_once(
                 user_id=user_id,
@@ -205,8 +279,10 @@ def chat(
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 db=db,
+                agent_state=agent_state,
             )
         except Exception as e:
+            agent_state.fail("chat_failed", e)
             raise RuntimeError(f"chat失败: {e}") from e
 
         response = run["response"]
@@ -222,7 +298,9 @@ def chat(
             model_used=model_used,
             token_usage=token_usage,
             db=db,
+            agent_state=agent_state,
         )
+        agent_state.transition(AgentStage.DONE, "chat_done")
         long_term_memories = run["long_term_memories"]
         rag_results = run["rag_results"]
         return {
@@ -241,10 +319,16 @@ def chat(
                 "upgraded": 0,
                 "degraded": 0,
             },
+            "agent_state": agent_state.to_dict(max_events=30),
         }
 
     router_provider, router_model = _resolve_model_for_tier("small", llm_provider)
     llm_router = get_llm(llm_provider=router_provider, llm_model=router_model)
+    agent_state.transition(
+        AgentStage.ROUTE,
+        "route_start",
+        {"router_provider": router_provider, "router_model": router_model},
+    )
     decision = smart_route(
         query=message,
         llm_for_score=llm_router,
@@ -255,6 +339,17 @@ def chat(
 
     decided_tier = "large" if decision.force_large else decision.tier
     tiers = ["large"] if decided_tier == "large" else ["small", "medium", "large"]
+    agent_state.transition(
+        AgentStage.ROUTE,
+        "route_decided",
+        {
+            "decided_tier": decided_tier,
+            "score": decision.score,
+            "rule_hit": decision.rule_hit,
+            "force_large": decision.force_large,
+            "parse_ok": decision.parse_ok,
+        },
+    )
 
     final_run = None
     checker_raw = None
@@ -263,6 +358,11 @@ def chat(
     attempts: list[dict] = []
     for idx, tier in enumerate(tiers):
         provider_t, model_t = _resolve_model_for_tier(tier, llm_provider)
+        agent_state.transition(
+            AgentStage.GENERATE,
+            "cascade_attempt_start",
+            {"tier": tier, "provider": provider_t, "model": model_t},
+        )
         try:
             run = _run_once(
                 user_id=user_id,
@@ -271,6 +371,7 @@ def chat(
                 llm_provider=provider_t,
                 llm_model=model_t,
                 db=db,
+                agent_state=agent_state,
             )
             attempts.append(
                 {
@@ -283,6 +384,11 @@ def chat(
         except Exception as e:
             degraded = 1
             attempts.append({"tier": tier, "error": type(e).__name__})
+            agent_state.transition(
+                AgentStage.ERROR,
+                "cascade_attempt_failed",
+                {"tier": tier, "error": str(e), "error_type": type(e).__name__},
+            )
             if decided_tier == "large" and tier == "large":
                 continue
             if tier == "small":
@@ -294,13 +400,24 @@ def chat(
             final_run = run
             break
 
+        agent_state.transition(
+            AgentStage.VALIDATE,
+            "answer_check_start",
+            {"tier": tier},
+        )
         ok, checker_raw = check_answer_yesno(message, response.content, llm_router)
+        agent_state.transition(
+            AgentStage.VALIDATE,
+            "answer_check_done",
+            {"tier": tier, "passed": ok, "checker_raw": checker_raw},
+        )
         if ok:
             final_run = run
             break
         upgraded = 1
 
     if final_run is None:
+        agent_state.fail("all_model_attempts_failed", "所有模型尝试均失败")
         raise RuntimeError("所有模型尝试均失败")
 
     response = final_run["response"]
@@ -322,7 +439,7 @@ def chat(
                 degraded=degraded,
                 final_provider=provider_used,
                 final_model=model_used,
-                meta={"attempts": attempts},
+                meta={"attempts": attempts, "agent_state": agent_state.to_dict(max_events=40)},
             )
         )
         db.commit()
@@ -343,7 +460,9 @@ def chat(
         model_used=model_used,
         token_usage=token_usage,
         db=db,
+        agent_state=agent_state,
     )
+    agent_state.transition(AgentStage.DONE, "chat_done")
 
     long_term_memories = final_run["long_term_memories"]
     rag_results = final_run["rag_results"]
@@ -366,4 +485,5 @@ def chat(
             "degraded": degraded,
             "attempts": attempts,
         },
+        "agent_state": agent_state.to_dict(max_events=40),
     }

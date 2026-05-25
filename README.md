@@ -1,42 +1,45 @@
 # RAG-Memory-Agent
 
-企业知识库 RAG + 三层记忆 AI 助理。项目基于 FastAPI、LangChain、PostgreSQL 和 OpenAI-compatible API 构建，支持文档知识库问答、多轮记忆、用户偏好、三档模型路由、级联升级、Agent 状态机与自动化评测。
+[![Python](https://img.shields.io/badge/Python-3.11-blue)](#)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688)](#)
+[![LangChain](https://img.shields.io/badge/LangChain-0.1.x-green)](#)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](#)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)](#)
+[![RAGAS](https://img.shields.io/badge/Eval-RAGAS-purple)](#)
 
-## 核心能力
+**Enterprise RAG + Memory Agent with LLM routing, cascade fallback, RAGAS evaluation, and agent state-machine observability.**
 
-- 企业知识库 RAG：文档上传、解析、标题感知分块、Embedding 入库、混合检索、RRF 融合、LLM 重排序、基于上下文生成回答
-- 三层记忆：短期会话窗口、长期记忆向量召回、用户偏好抽取与更新
-- 多轮上下文检索：原始问题、改写问题、近期用户问题共同参与召回，缓解指代不明和上下文遗忘
-- 大模型路由：规则路由 + 小模型难度评分，自动分配 `small / medium / large` 三档模型
-- 级联升级：小模型优先回答，自检不通过时自动升级高配模型重生成
-- Agent 状态机：显式记录 `route / retrieve / generate / validate / persist / done` 等阶段，降低复杂链路中的步骤错乱和关键信息遗漏
-- 结构化输出约束：路由评分与回答自检使用 JSON 结构化输出，提升解析稳定性
-- 自动化评测：RAGAS、LLM-as-Judge、成本/延迟 benchmark、状态机稳定性 benchmark
+[中文文档](README.zh-CN.md) · [Evaluation Report](outputs/routing_benchmark_report.md)
 
-## 架构流程
+## Why This Project
 
-```text
-用户请求
-→ Agent 状态机初始化
-→ 混合路由器（规则 + 难度评分）
-→ 多 Query 检索（原问题 + 改写问题 + 最近用户问题）
-→ 语义检索 + 中文关键词检索
-→ RRF 融合 + LLM 重排序
-→ 三层记忆注入
-→ 小模型优先生成
-→ JSON 自检
-→ 必要时升级大模型
-→ 写入记忆、用量日志、路由日志和状态机事件
-→ 返回答案
-```
+Most RAG demos stop at “upload documents and ask questions”. This project focuses on what a production-grade enterprise RAG agent actually needs:
 
-## 量化结果
+- reliable retrieval over long enterprise documents
+- multi-turn memory and user preference tracking
+- model routing to reduce LLM cost and latency
+- cascade fallback from small models to stronger models
+- structured outputs to avoid parsing drift
+- explicit agent state machine for observability
+- reproducible RAGAS and LLM-as-Judge benchmarks
 
-### RAG 检索与回答质量
+## Highlights
 
-基于 10 万字企业制度模拟知识库、184 个优化后知识分块、30 条企业制度测试样本评测：
+- **Enterprise RAG**: upload, parse, title-aware chunking, embedding, hybrid retrieval, RRF fusion, LLM reranking, grounded generation
+- **Three-layer Memory**: short-term session memory, long-term vector memory, user preference extraction
+- **LLM Router**: rule routing + small-model difficulty scoring for `small / medium / large` model tiers
+- **Cascade Fallback**: small model answers first; self-check failures trigger stronger model regeneration
+- **Agent State Machine**: records `route / retrieve / generate / validate / persist / done` stages for every request
+- **Structured Outputs**: JSON-constrained routing score and answer self-check to improve parsing stability
+- **Evaluation Suite**: RAGAS, LLM-as-Judge, cost/latency benchmark, state-machine stability benchmark
 
-| 指标 | 得分 |
+## Quantified Results
+
+### RAG Quality
+
+Evaluated on a 100k-character enterprise policy knowledge base with 184 optimized chunks and 30 QA samples.
+
+| Metric | Score |
 |---|---:|
 | Context Precision | 0.8072 |
 | Context Recall | 0.9000 |
@@ -44,67 +47,97 @@
 | Answer Relevancy | 0.8567 |
 | Answer Correctness | 0.8867 |
 
-检索优化前后对比：
+Retrieval optimization improvement:
 
-| 指标 | 优化前 | 优化后 | 提升 |
+| Metric | Before | After | Improvement |
 |---|---:|---:|---:|
 | Context Precision | 0.7500 | 0.8072 | +7.63% |
 | Context Recall | 0.7833 | 0.9000 | +14.89% |
 
-### 路由成本与延迟
+### Cost and Latency
 
-对比固定使用 `qwen-max` 的 baseline 与三档模型路由方案：
+Baseline uses `qwen-max` for every request. Optimized mode uses model routing and cascade fallback.
 
-| 指标 | Baseline | Optimized | 改善 |
+| Metric | Baseline | Optimized | Improvement |
 |---|---:|---:|---:|
-| 总成本估算 | 0.007257 | 0.0007871 | 下降 89.15% |
-| 平均延迟 | 21620.69 ms | 6454.71 ms | 下降 70.15% |
-| P95 延迟 | 41866.45 ms | 18294.86 ms | 下降 56.30% |
+| Estimated cost | 0.007257 | 0.0007871 | -89.15% |
+| Average latency | 21620.69 ms | 6454.71 ms | -70.15% |
+| P95 latency | 41866.45 ms | 18294.86 ms | -56.30% |
 
-### Agent 状态机稳定性
+### Agent Stability
 
-基于 50 条混合测试样本，覆盖闲聊、普通问答、敏感信息、复杂问题、模糊问法、跨分块、无答案和上下文指代：
+Evaluated on 50 mixed samples covering chat, normal QA, sensitive questions, fuzzy questions, multi-context questions, unknown-answer questions, and context-reference questions.
 
-| 指标 | 得分 |
+| Metric | Score |
 |---|---:|
-| 请求成功率 | 100.00% |
-| 状态链路完整率 | 100.00% |
-| 路由结构化解析成功率 | 100.00% |
-| 自检结构化解析成功率 | 100.00% |
+| Request success rate | 100.00% |
+| State-chain completeness | 100.00% |
+| Router JSON parse success | 100.00% |
+| Self-check JSON parse success | 100.00% |
 
-完整报告见：
+## Architecture
 
-```text
-outputs/routing_benchmark_report.md
+```mermaid
+flowchart TD
+    A[User Query] --> B[Agent State Machine]
+    B --> C[Hybrid LLM Router]
+    C --> D{Model Tier}
+    D -->|small| E[Small Model First]
+    D -->|medium| F[Medium Model]
+    D -->|large| G[Large Model]
+
+    B --> H[Query Rewrite]
+    H --> I[Multi-Query Retrieval]
+    I --> J[Semantic Retrieval]
+    I --> K[Chinese Keyword Retrieval]
+    J --> L[RRF Fusion]
+    K --> L
+    L --> M[LLM Rerank]
+
+    B --> N[Three-layer Memory]
+    N --> O[Prompt Builder]
+    M --> O
+    E --> P[JSON Self-check]
+    F --> P
+    G --> P
+    P -->|pass| Q[Final Answer]
+    P -->|fail| G
+    Q --> R[Usage Log / Route Log / State Events]
 ```
 
-## 接口
+## Quick Start
 
-- `GET /`：Web UI
-- `POST /api/chat`：对话
-- `GET /api/models?provider=...`：模型列表
-- `POST /api/upload`：上传并索引文档
-
-## 快速启动
-
-先按 `.env.example` 准备 `.env`，配置 LLM、Embedding 和数据库连接。
-
-### Docker
+Prepare `.env` from `.env.example` first.
 
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
-### 本地
+Open:
 
-```bash
-pip install -r requirements.txt
-python main.py
+```text
+http://localhost:8000/
 ```
 
-## 三档模型配置
+## API
 
-示例（DashScope / Qwen）：
+- `GET /` - Web UI
+- `POST /api/chat` - Chat endpoint
+- `GET /api/models?provider=...` - List models
+- `POST /api/upload` - Upload and index documents
+
+Example:
+
+```bash
+curl -s http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","session_id":"s1","message":"What should I do if an approval is rejected?"}'
+```
+
+## Model Routing Configuration
+
+Example for DashScope / Qwen:
 
 ```env
 LLM_PROVIDER=dashscope
@@ -113,11 +146,11 @@ LLM_MEDIUM_MODEL=qwen-plus
 LLM_LARGE_MODEL=qwen-max
 ```
 
-不传 `llm_model` 时，`/api/chat` 会自动启用路由与级联升级；传入 `llm_model` 时会绕过路由，便于调试指定模型。
+If `llm_model` is not provided in `/api/chat`, routing and cascade fallback are enabled automatically. If `llm_model` is provided, the request bypasses routing for debugging.
 
-## 评测与实验
+## Reproduce Benchmarks
 
-### RAGAS 检索质量
+### RAGAS Retrieval Evaluation
 
 ```bash
 docker compose exec -T app python scripts/ragas_eval.py \
@@ -126,7 +159,7 @@ docker compose exec -T app python scripts/ragas_eval.py \
   --output outputs/ragas_enterprise_retrieval_results_optimized.csv
 ```
 
-### 回答端 LLM-as-Judge
+### LLM-as-Judge Answer Evaluation
 
 ```bash
 docker compose exec -T app python scripts/llm_judge_eval.py \
@@ -134,33 +167,39 @@ docker compose exec -T app python scripts/llm_judge_eval.py \
   --output outputs/llm_judge_answer_metrics.csv
 ```
 
-### 路由成本与延迟
+### Routing Cost and Latency Benchmark
 
 ```bash
 docker compose exec -T app python scripts/benchmark_routing.py \
   --input data/ragas_employee_handbook_testset.csv
 ```
 
-### Agent 状态机稳定性
+### Agent State Machine Benchmark
 
 ```bash
 docker compose exec -T app python scripts/benchmark_agent_state.py \
   --input data/agent_state_benchmark_questions.csv
 ```
 
-## 主要文件
+## Repository Map
 
-- `services/chat_service.py`：对话主链路，整合 RAG、记忆、路由、级联和状态机
-- `services/router_service.py`：混合路由、结构化难度评分、回答自检
-- `services/agent_state.py`：Agent 状态机
-- `modules/rag/loader.py`：标题感知分块
-- `modules/rag/retriever.py`：语义检索、关键词检索、RRF 融合、重排序
-- `scripts/ragas_eval.py`：RAGAS 评测
-- `scripts/llm_judge_eval.py`：回答端 LLM-as-Judge
-- `scripts/benchmark_routing.py`：成本与延迟 benchmark
-- `scripts/benchmark_agent_state.py`：状态机稳定性 benchmark
-- `outputs/routing_benchmark_report.md`：完整实验报告
+```text
+services/chat_service.py          # Main chat pipeline
+services/router_service.py        # Hybrid router and structured self-check
+services/agent_state.py           # Agent state machine
+modules/rag/loader.py             # Title-aware chunking
+modules/rag/retriever.py          # Hybrid retrieval, RRF fusion, reranking
+scripts/ragas_eval.py             # RAGAS evaluation
+scripts/llm_judge_eval.py         # LLM-as-Judge answer metrics
+scripts/benchmark_routing.py      # Cost and latency benchmark
+scripts/benchmark_agent_state.py  # State-machine stability benchmark
+outputs/routing_benchmark_report.md
+```
 
-## 技术栈
+## Suggested GitHub Topics
 
-Python / FastAPI / LangChain / SQLAlchemy / PostgreSQL / Docker / RAG / Embedding / RAGAS / LLM-as-Judge / OpenAI-compatible API / Qwen（DashScope）
+`rag` · `ragas` · `llm` · `ai-agent` · `memory` · `fastapi` · `langchain` · `postgresql` · `llm-routing` · `qwen` · `dashscope`
+
+## Tech Stack
+
+Python, FastAPI, LangChain, SQLAlchemy, PostgreSQL, Docker, RAGAS, OpenAI-compatible API, Qwen / DashScope.

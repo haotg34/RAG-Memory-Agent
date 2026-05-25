@@ -1,0 +1,6 @@
+{
+  "sample_count": 30,
+  "answer_relevancy": 0.8567,
+  "answer_correctness": 0.8867,
+  "method": "LLM-as-Judge, no embedding dependency"
+}

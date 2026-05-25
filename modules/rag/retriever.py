@@ -4,6 +4,7 @@ import numpy as np
 from config import settings
 from typing import List, Tuple
 from modules.embedding_client import embed_text
+import re
 
 _emb_api_key, _emb_base_url, _emb_model = settings.resolve_embedding()
 
@@ -15,7 +16,9 @@ def _cosine_similarity(a: list, b: list) -> float:
     return float(np.dot(a_arr, b_arr) / denom)
 
 
-def semantic_retrieval(query: str, db: Session, top_k: int = 20) -> List[Tuple[str, float]]:
+def semantic_retrieval(query: str, db: Session, top_k: int | None = None) -> List[Tuple[str, float]]:
+    if top_k is None:
+        top_k = settings.rag_semantic_top_k
     query_embedding = embed_text(query, _emb_model, _emb_api_key, _emb_base_url)
     all_chunks = db.query(DocumentChunk).all()
 
@@ -31,20 +34,34 @@ def semantic_retrieval(query: str, db: Session, top_k: int = 20) -> List[Tuple[s
     return results[:top_k]
 
 
-def keyword_retrieval(query: str, db: Session, top_k: int = 20) -> List[Tuple[str, float]]:
-    keywords = query.lower().split()
+def _extract_keywords(query: str) -> list[str]:
+    q = (query or "").lower()
+    words = [w for w in re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]{2,}", q) if len(w) >= 2]
+    keywords = set(words)
+    for word in words:
+        if re.fullmatch(r"[\u4e00-\u9fff]+", word):
+            for n in (2, 3, 4):
+                for i in range(0, max(len(word) - n + 1, 0)):
+                    keywords.add(word[i : i + n])
+    return sorted(keywords, key=len, reverse=True)[:80]
+
+
+def keyword_retrieval(query: str, db: Session, top_k: int | None = None) -> List[Tuple[str, float]]:
+    if top_k is None:
+        top_k = settings.rag_keyword_top_k
+    keywords = _extract_keywords(query)
     all_chunks = db.query(DocumentChunk).all()
 
-    if not all_chunks:
+    if not all_chunks or not keywords:
         return []
 
     results = []
     for chunk in all_chunks:
         content = chunk.content.lower()
-        score = 0
+        score = 0.0
         for keyword in keywords:
             if keyword in content:
-                score += 1
+                score += max(len(keyword), 2) / 2
         if score > 0:
             results.append((chunk.content, float(score)))
 
@@ -52,24 +69,11 @@ def keyword_retrieval(query: str, db: Session, top_k: int = 20) -> List[Tuple[st
     return results[:top_k]
 
 
-def rrf_fusion(
-    semantic_results: List[Tuple[str, float]],
-    keyword_results: List[Tuple[str, float]],
-    k: int = 60,
-) -> List[str]:
-    semantic_ranks = {content: i + 1 for i, (content, _) in enumerate(semantic_results)}
-    keyword_ranks = {content: i + 1 for i, (content, _) in enumerate(keyword_results)}
-
-    all_contents = set(semantic_ranks.keys()).union(set(keyword_ranks.keys()))
-
+def rrf_fusion(result_sets: list[List[Tuple[str, float]]], k: int = 60) -> List[str]:
     rrf_scores = {}
-    for content in all_contents:
-        score = 0.0
-        if content in semantic_ranks:
-            score += 1.0 / (k + semantic_ranks[content])
-        if content in keyword_ranks:
-            score += 1.0 / (k + keyword_ranks[content])
-        rrf_scores[content] = score
+    for results in result_sets:
+        for rank, (content, _) in enumerate(results, 1):
+            rrf_scores[content] = rrf_scores.get(content, 0.0) + 1.0 / (k + rank)
 
     sorted_contents = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return [content for content, _ in sorted_contents]
@@ -117,14 +121,34 @@ def bge_rerank(query: str, documents: List[str], top_k: int | None = None) -> Li
         return documents[:top_k]
 
 
-def hybrid_retrieval(query: str, db: Session, top_k: int | None = None) -> List[str]:
+def _unique_queries(query: str, extra_queries: list[str] | None = None) -> list[str]:
+    seen = set()
+    queries = []
+    for q in [query, *(extra_queries or [])]:
+        text = (q or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        queries.append(text)
+    return queries[:4]
+
+
+def hybrid_retrieval(
+    query: str,
+    db: Session,
+    top_k: int | None = None,
+    extra_queries: list[str] | None = None,
+) -> List[str]:
     if top_k is None:
         top_k = settings.rag_top_k
 
-    semantic_results = semantic_retrieval(query, db)
-    keyword_results = keyword_retrieval(query, db)
+    result_sets = []
+    queries = _unique_queries(query, extra_queries)
+    for q in queries:
+        result_sets.append(semantic_retrieval(q, db))
+        result_sets.append(keyword_retrieval(q, db))
 
-    fused_results = rrf_fusion(semantic_results, keyword_results)
+    fused_results = rrf_fusion(result_sets)[: settings.rag_candidate_top_k]
     reranked_results = bge_rerank(query, fused_results, top_k)
 
     return reranked_results

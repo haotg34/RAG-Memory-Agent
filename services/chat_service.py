@@ -104,8 +104,17 @@ def _run_once(
 
     rewritten_query = rewrite_query(message, llm)
     long_term_memories = memory_manager.retrieve_long_term_memory(rewritten_query)
-    rag_results = hybrid_retrieval(rewritten_query, db)
     recent_memory = memory_manager.get_recent_memory(session_id)
+    recent_user_queries = [
+        item.get("content", "")
+        for item in recent_memory[-6:]
+        if item.get("role") == "user" and item.get("content")
+    ][-2:]
+    rag_results = hybrid_retrieval(
+        rewritten_query,
+        db,
+        extra_queries=[message, *recent_user_queries],
+    )
     user_preferences = memory_manager.get_user_preferences()
 
     system_prompt = build_system_prompt(long_term_memories, rag_results, user_preferences)
@@ -222,6 +231,16 @@ def chat(
             "retrieved_memories": long_term_memories,
             "retrieved_knowledge": rag_results,
             "token_usage": token_usage,
+            "provider_used": provider_used,
+            "model_used": model_used,
+            "route": {
+                "enabled": False,
+                "decided_tier": None,
+                "decided_score": None,
+                "rule_hit": None,
+                "upgraded": 0,
+                "degraded": 0,
+            },
         }
 
     router_provider, router_model = _resolve_model_for_tier("small", llm_provider)
@@ -335,4 +354,16 @@ def chat(
         "retrieved_memories": long_term_memories,
         "retrieved_knowledge": rag_results,
         "token_usage": token_usage,
+        "provider_used": provider_used,
+        "model_used": model_used,
+        "route": {
+            "enabled": True,
+            "decided_tier": decided_tier,
+            "decided_score": decision.score,
+            "rule_hit": decision.rule_hit,
+            "checker_raw": checker_raw,
+            "upgraded": upgraded,
+            "degraded": degraded,
+            "attempts": attempts,
+        },
     }

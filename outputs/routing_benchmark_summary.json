@@ -1,0 +1,21 @@
+{
+  "sample_count": 20,
+  "baseline_total_cost": 0.007257,
+  "optimized_total_cost": 0.0007871,
+  "cost_reduction_pct": 89.15,
+  "baseline_avg_latency_ms": 21620.69,
+  "optimized_avg_latency_ms": 6454.71,
+  "avg_latency_reduction_pct": 70.15,
+  "baseline_p95_latency_ms": 41866.45,
+  "optimized_p95_latency_ms": 18294.86,
+  "p95_latency_reduction_pct": 56.3,
+  "optimized_route_mix": {
+    "small": 19,
+    "large": 1
+  },
+  "small_medium_large_hit_rate": {
+    "small": 95.0,
+    "large": 5.0
+  },
+  "upgrade_rate_pct": 0.0
+}

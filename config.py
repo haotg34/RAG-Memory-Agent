@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     memory_window_size: int = 10
     long_term_memory_top_k: int = 3
     rag_top_k: int = 5
+    rag_semantic_top_k: int = 40
+    rag_keyword_top_k: int = 40
+    rag_candidate_top_k: int = 30
 
     def resolve_llm_for(self, provider: str | None = None) -> tuple[str, str, str]:
         p = (provider or self.llm_provider or "openai").lower()

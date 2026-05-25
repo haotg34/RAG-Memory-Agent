@@ -147,4 +147,3 @@ docker compose exec -T app python scripts/benchmark_agent_state.py \
 ## 技术栈
 
 Python / FastAPI / LangChain / SQLAlchemy / PostgreSQL / Docker / RAGAS / LLM-as-Judge / OpenAI-compatible API / Qwen（DashScope）
-
